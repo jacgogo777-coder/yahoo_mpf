@@ -35,8 +35,8 @@ st.markdown("本專案演示了從資料獲取、多維度技術指標計算到�
 st.sidebar.header("⚙️ 參數設定")
 stock_id = st.sidebar.text_input("股票代號", "2330.TW")
 # 設定預設觀測日期 (根據 Source 3 邏輯)
-default_start = datetime(2025, 11, 19)
-default_end = datetime(2026, 5, 22)
+default_start = datetime(2025, 11, 19).date()
+default_end = datetime(2026, 5, 22).date()
 
 target_start = st.sidebar.date_input("觀測起始日", default_start)
 target_end = st.sidebar.date_input("觀測結束日", default_end)
