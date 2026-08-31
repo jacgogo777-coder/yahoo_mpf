@@ -215,7 +215,7 @@ choices = ['r', 'g']
 vol_colors = np.select(conditions, choices, default='gray')
 ax2.plot(df['OBV'], color='purple', ls='--', label='OBV')
 ax2_v = ax2.twinx()
-ax2_v.bar(df.index, df['Volume'], color=vol_colors, alpha=0.3, width=0.8)
+ax2_v.bar(df.index, df['Volume'], color=vol_colors, alpha=0.5, width=0.8)
 ax2.set_title("OBV 能量潮")
 ax2.legend(loc='upper left', fontsize='small')
 
