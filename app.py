@@ -13,28 +13,6 @@ st.set_page_config(
     page_icon="📈",
     layout="wide"
 )
-
-# 處理中文字型 (解決雲端 Linux 與本機亂碼問題)
-font_path = "NotoSansTC-Regular.ttf"
-if os.path.exists(font_path):
-    font_manager.fontManager.addfont(font_path)
-    prop = font_manager.FontProperties(fname=font_path)
-    plt.rcParams['font.sans-serif'] = [prop.get_name()]
-else:
-    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC', 'DejaVu Sans', 'sans-serif']
-
-plt.rcParams['axes.unicode_minus'] = False
-
-st.title("📊 股市 AI 紅綠燈多空指標分析系統")
-st.markdown("""
-本系統結合專業技術指標運算與**多空紅綠燈診斷模型**：
-- 🔴 **紅燈 (看多 / +1 分)**：偏多訊號、黃金交叉、均線支撐或超賣底部反彈。
-- 🟢 **綠燈 (看空 / -1 分)**：偏空訊號、死亡交叉、均線反壓或超買過熱修正。
-- 🟡 **黃燈 (中立 / 0 分)**：盤整無明確方向或處於中性區間。
-""")
-
-st.sidebar.header("⚙️ 參數設定")
-
 # 安全讀取 st.secrets 設定 (若無配置則自動 fallback 到備用值)
 def password_required():
     """只有輸入 Streamlit Secrets 中的密碼後，才允許顯示主頁。"""
@@ -79,6 +57,28 @@ if not password_required():
 if st.sidebar.button("🔒 登出", width="stretch"):
     st.session_state["authenticated"] = False
     st.rerun()
+
+# 處理中文字型 (解決雲端 Linux 與本機亂碼問題)
+font_path = "NotoSansTC-Regular.ttf"
+if os.path.exists(font_path):
+    font_manager.fontManager.addfont(font_path)
+    prop = font_manager.FontProperties(fname=font_path)
+    plt.rcParams['font.sans-serif'] = [prop.get_name()]
+else:
+    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC', 'DejaVu Sans', 'sans-serif']
+
+plt.rcParams['axes.unicode_minus'] = False
+
+st.title("📊 股市 AI 紅綠燈多空指標分析系統")
+st.markdown("""
+本系統結合專業技術指標運算與**多空紅綠燈診斷模型**：
+- 🔴 **紅燈 (看多 / +1 分)**：偏多訊號、黃金交叉、均線支撐或超賣底部反彈。
+- 🟢 **綠燈 (看空 / -1 分)**：偏空訊號、死亡交叉、均線反壓或超買過熱修正。
+- 🟡 **黃燈 (中立 / 0 分)**：盤整無明確方向或處於中性區間。
+""")
+
+st.sidebar.header("⚙️ 參數設定")
+
 
 stock_id = st.sidebar.text_input("股票代號", secret_default_stock)
 
