@@ -206,7 +206,13 @@ ax1.set_title(f"【{stock_id}】綜合技術分析", fontsize=16)
 # --- Ax2: OBV 與 成交量 ---
 ax2.set_xticks(x_ticks_pos)
 ax2.set_xticklabels([]) # 隱藏重疊字體
-vol_colors = np.where(df['Close'] > df['Close'].shift(1), 'r', 'g')
+#vol_colors = np.where(df['Close'] > df['Close'].shift(1), 'r', 'g')
+conditions = [
+    df['Close'] > df['Close'].shift(1),  # 漲 -> 紅
+    df['Close'] < df['Close'].shift(1)   # 跌 -> 綠
+]
+choices = ['r', 'g']
+vol_colors = np.select(conditions, choices, default='gray')
 ax2.plot(df['OBV'], color='purple', ls='--', label='OBV')
 ax2_v = ax2.twinx()
 ax2_v.bar(df.index, df['Volume'], color=vol_colors, alpha=0.3, width=0.8)
