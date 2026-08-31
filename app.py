@@ -1,5 +1,3 @@
-#有用AI生成指標分析和登入密碼
-import hmac
 import streamlit as st
 import yfinance as yf
 from datetime import datetime, timedelta
@@ -7,50 +5,55 @@ import matplotlib.pyplot as plt
 import mplfinance.original_flavor as mpf
 import pandas as pd
 import numpy as np
-import matplotlib
 import os
+import hmac
 from matplotlib import font_manager
-import matplotlib.patches as mpatches
 
-# ==========================================
-# 0. 網頁基本配置與字型處理
-# ==========================================
-st.set_page_config(page_title="2026 股市 AI 紅盤實作專案", layout="wide")
+st.set_page_config(
+    page_title="2026 股市 AI 紅綠燈多空指標分析系統",
+    page_icon="📈",
+    layout="wide"
+)
 
+# 安全讀取 st.secrets 設定
+def get_secret(key, default_val=None):
+    """安全取得 Streamlit Secrets，若不存在則回傳預設值。"""
+    try:
+        if hasattr(st, "secrets") and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return default_val
 
 def password_required():
     """只有輸入 Streamlit Secrets 中的密碼後，才允許顯示主頁。"""
     if st.session_state.get("authenticated", False):
         return True
 
-    try:
-        expected_password = str(st.secrets["APP_PASSWORD"])
-    except (FileNotFoundError, KeyError):
-        st.error("尚未設定登入密碼，請先在 Streamlit 平台的 Secrets 加入 APP_PASSWORD。")
-        st.code('APP_PASSWORD = "請設定你的密碼"', language="toml")
-        return False
+    expected_password = str(get_secret("APP_PASSWORD", ""))
 
     if not expected_password:
-        st.error("APP_PASSWORD 不可為空白，請到 Streamlit 平台重新設定。")
+        st.error("⚠️ 尚未設定登入密碼！請在 Streamlit Cloud 平台的 Secrets（或本地 `.streamlit/secrets.toml`）中加入 `APP_PASSWORD`。")
+        st.code('APP_PASSWORD = "你的自訂密碼"', language="toml")
         return False
 
     st.title("🔐 2026 股市 AI 紅盤實作專案")
-    st.caption("請輸入密碼後進入分析主頁。")
+    st.caption("請輸入系統密碼以進入分析主頁。")
 
     with st.form("login_form", clear_on_submit=True):
         entered_password = st.text_input(
             "密碼",
             type="password",
-            placeholder="請輸入登入密碼",
+            placeholder="請輸入存取密碼",
         )
-        submitted = st.form_submit_button("登入", width="stretch")
+        submitted = st.form_submit_button("登入", use_container_width=True)
 
     if submitted:
         if hmac.compare_digest(entered_password, expected_password):
             st.session_state["authenticated"] = True
             st.rerun()
         else:
-            st.error("密碼錯誤，請重新輸入。")
+            st.error("❌ 密碼錯誤，請重新輸入。")
 
     return False
 
@@ -58,50 +61,61 @@ def password_required():
 if not password_required():
     st.stop()
 
-if st.sidebar.button("🔒 登出", width="stretch"):
+# 側邊欄登出按鈕
+if st.sidebar.button("🔒 登出系統", use_container_width=True):
     st.session_state["authenticated"] = False
     st.rerun()
 
-# 處理中文字型 (解決雲端 Linux 亂碼問題)
+# 處理中文字型 (解決雲端 Linux 與本機亂碼問題)
 font_path = "NotoSansTC-Regular.ttf"
 if os.path.exists(font_path):
     font_manager.fontManager.addfont(font_path)
     prop = font_manager.FontProperties(fname=font_path)
     plt.rcParams['font.sans-serif'] = [prop.get_name()]
 else:
-    # 本機環境嘗試使用正黑體
-    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
+    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC', 'DejaVu Sans', 'sans-serif']
 
 plt.rcParams['axes.unicode_minus'] = False
 
-st.title("📊 2026 歡慶端午 2330 股市分析專案")
+st.title("📊 股市 AI 紅綠燈多空指標分析系統")
 st.markdown("""
-本專案演示了從資料獲取、多維度技術指標計算，到專業級 **6 大指標圖表（均線/布林帶、OBV、KDJ、MACD、RSI、BIAS）** 排版的完整流程。
+本系統結合專業技術指標運算與**多空紅綠燈診斷模型**：
+- 🔴 **紅燈 (看多 / +1 分)**：偏多訊號、黃金交叉、均線支撐或超賣底部反彈。
+- 🟢 **綠燈 (看空 / -1 分)**：偏空訊號、死亡交叉、均線反壓或超買過熱修正。
+- 🟡 **黃燈 (中立 / 0 分)**：盤整無明確方向或處於中性區間。
 """)
 
-# ==========================================
-# 1. 側邊欄與參數設定
-# ==========================================
 st.sidebar.header("⚙️ 參數設定")
-stock_id = st.sidebar.text_input("股票代號", "2330.TW")
 
-# 加上 .date() 確保一開始就是純日期格式，避免 yfinance 初次載入報錯
+# 讀取 Secrets 預設值或預設備援值
+secret_default_stock = str(get_secret("DEFAULT_STOCK", "2330.TW"))
+secret_warmup = int(get_secret("WARMUP_DAYS", 60))
 
-default_end = datetime.today().date()
-default_start = (datetime.today()-timedelta(180)).date()
+stock_id = st.sidebar.text_input("股票代號", value=secret_default_stock)
+
+# 預設觀測日期區間
+default_start = datetime(2025, 11, 19).date()
+default_end = datetime(2026, 5, 22).date()
+
 target_start = st.sidebar.date_input("觀測起始日", default_start)
 target_end = st.sidebar.date_input("觀測結束日", default_end)
-warmup_days = st.sidebar.slider("指標預熱天數 (用於 EMA/RSI 準確度)", 30, 100, 60)
+warmup_days = st.sidebar.slider("指標預熱天數 (用於 EMA/RSI 準確度)", 30, 100, secret_warmup)
 
-# 顯示字型狀態診斷
-if os.path.exists(font_path):
-    st.sidebar.success("✅ 已載入 NotoSansTC 中文字型")
-else:
-    st.sidebar.warning("⚠️ 使用系統預設中文字型 (雲端環境請確認已上傳 ttf 檔)")
+# 側邊欄狀態診斷 (字型與 Secrets)
+with st.sidebar.expander("🔐 Secrets 與系統狀態"):
+    if os.path.exists(font_path):
+        st.success("✅ 已載入 NotoSansTC 中文字型")
+    else:
+        st.warning("⚠️ 使用系統預設中文字型")
 
-# ==========================================
-# 2. 步驟 1：資料獲取與「預熱」邏輯
-# ==========================================
+    try:
+        if hasattr(st, "secrets") and len(st.secrets.keys()) > 0:
+            st.success(f"✅ 已讀取 Secrets 設定項：{', '.join(st.secrets.keys())}")
+        else:
+            st.info("ℹ️ 目前使用預設參數（未偵測到 secrets.toml）")
+    except Exception:
+        st.info("ℹ️ 目前使用預設參數（未偵測到 secrets.toml）")
+
 st.header("Step 1: 資料獲取與預熱處理")
 with st.expander("📖 為什麼需要預熱資料？"):
     st.write("""
@@ -110,112 +124,202 @@ with st.expander("📖 為什麼需要預熱資料？"):
     - **避免格式錯誤**：強制將日期轉為 `YYYY-MM-DD` 格式再向 Yahoo Finance 請求，確保網頁一開啟就能正確載入資料。
     """)
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_stock_data(symbol, start_dt, end_dt, warmup):
-    # 向前推 warmup 天數
     fetch_start = start_dt - timedelta(days=warmup)
-    
-    # 強制轉換為字串格式，避免 datetime 物件造成 yfinance 解析異常
     start_str = fetch_start.strftime('%Y-%m-%d')
     end_str = end_dt.strftime('%Y-%m-%d')
     
-    df = yf.download(symbol, start=start_str, end=end_str, auto_adjust=False)
+    df = yf.download(symbol, start=start_str, end=end_str, auto_adjust=False, progress=False)
     
-    if not df.empty:
-        # 展平欄位名稱 (若 yfinance 回傳 MultiIndex)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-    # 清洗壞資料：Yahoo 偶爾回傳 OHLC 為 NaN 或 0 的異常列（如 0050.TW），
-    # 會造成 K 線插到 0、支撐位 = 0 與後續 NoneType 運算錯誤
-    ohlc_cols = ['Open', 'High', 'Low', 'Close']
-    df = df.dropna(subset=ohlc_cols)
-    df = df[(df[ohlc_cols] > 0).all(axis=1)]
+    if not df.empty and isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
     return df
 
-df_all = load_stock_data(stock_id, target_start, target_end, warmup_days)
+with st.spinner('正在獲取股票歷史行情數據...'):
+    df_all = load_stock_data(stock_id, target_start, target_end, warmup_days)
 
 if df_all.empty:
-    st.error("找不到資料，請檢查代號或網路連線。")
+    st.error("❌ 找不到該標的行情資料，請檢查股票代號（台股如 2330.TW，美股如 AAPL）或網路連線。")
     st.stop()
 
-# ==========================================
-# 3. 步驟 2：技術指標運算 (6大指標)
-# ==========================================
-st.header("Step 2: 技術指標運算 (Indicator Math)")
-with st.expander("📖 查看 6 大指標運算邏輯說明"):
-    st.markdown("""
-    1. **均線與布林通道 (SMA & BBands)**：5日、10日、20日均線，以及 20日均線上下 2 倍標準差的軌道。
-    2. **KDJ**：透過 9 日最高/最低價計算 RSV，再以 EWM (指數加權移動平均) 平滑出 K、D、J 值。
-    3. **OBV (能量潮)**：利用成交量與股價漲跌的累計值，觀察資金進出動向。
-    4. **MACD**：計算 12日與 26日 EMA 之差 (DIF)，以及其 9日訊號線 (MACD)。
-    5. **RSI (相對強弱指標)**：使用 Yahoo Finance 官方標準公式 (修正平滑移動平均法) 計算 5日與 10日 RSI。
-    6. **BIAS (乖離率)**：計算股價偏離 10日與 20日均線的百分比，並繪製兩者差距的柱狀圖判斷反轉點。
-    """)
+st.header("Step 2: 6 大技術指標運算 (Technical Math)")
 
-with st.spinner('各項指標計算中...'):
-    df_calculated = df_all.copy()
+with st.spinner('計算技術指標中 (SMA, BBands, KDJ, OBV, MACD, RSI, BIAS)...'):
+    df_calc = df_all.copy()
     
-    # 1. SMA & BBands
-    df_calculated['SMA_5'] = df_calculated['Close'].rolling(window=5).mean()
-    df_calculated['SMA_10'] = df_calculated['Close'].rolling(window=10).mean()
-    df_calculated['SMA_20'] = df_calculated['Close'].rolling(window=20).mean()
-    df_calculated['std_dev'] = df_calculated['Close'].rolling(window=20).std()
-    df_calculated['upper_band'] = df_calculated['SMA_20'] + (df_calculated['std_dev'] * 2)
-    df_calculated['lower_band'] = df_calculated['SMA_20'] - (df_calculated['std_dev'] * 2)
+    # 1. SMA 均線與布林通道 (BBands)
+    df_calc['SMA_5'] = df_calc['Close'].rolling(window=5).mean()
+    df_calc['SMA_10'] = df_calc['Close'].rolling(window=10).mean()
+    df_calc['SMA_20'] = df_calc['Close'].rolling(window=20).mean()
+    df_calc['std_dev'] = df_calc['Close'].rolling(window=20).std()
+    df_calc['upper_band'] = df_calc['SMA_20'] + (df_calc['std_dev'] * 2)
+    df_calc['lower_band'] = df_calc['SMA_20'] - (df_calc['std_dev'] * 2)
 
-    # 2. KDJ (EWM 快速法)
+    # 2. KDJ 指標 (9日 RSV + EWM 平滑)
     n = 9
-    low_min = df_calculated['Low'].rolling(window=n).min()
-    high_max = df_calculated['High'].rolling(window=n).max()
-    df_calculated['RSV'] = ((df_calculated['Close'] - low_min) / (high_max - low_min)) * 100
-    df_calculated['K'] = df_calculated['RSV'].ewm(alpha=1/3, adjust=False).mean()
-    df_calculated['D'] = df_calculated['K'].ewm(alpha=1/3, adjust=False).mean()
-    df_calculated['J'] = 3 * df_calculated['D'] - 2 * df_calculated['K']
+    low_min = df_calc['Low'].rolling(window=n).min()
+    high_max = df_calc['High'].rolling(window=n).max()
+    df_calc['RSV'] = ((df_calc['Close'] - low_min) / (high_max - low_min).replace(0, np.nan)) * 100
+    df_calc['RSV'] = df_calc['RSV'].fillna(50)
+    df_calc['K'] = df_calc['RSV'].ewm(alpha=1/3, adjust=False).mean()
+    df_calc['D'] = df_calc['K'].ewm(alpha=1/3, adjust=False).mean()
+    df_calc['J'] = 3 * df_calc['K'] - 2 * df_calc['D']
 
-    # 3. OBV
-    df_calculated['OBV'] = np.where(df_calculated['Close'] > df_calculated['Close'].shift(1), df_calculated['Volume'], -df_calculated['Volume']).cumsum()
+    # 3. OBV 能量潮
+    price_diff = df_calc['Close'].diff().fillna(0)
+    obv_direction = np.where(price_diff > 0, 1, np.where(price_diff < 0, -1, 0))
+    df_calc['OBV'] = (obv_direction * df_calc['Volume']).cumsum()
+    df_calc['OBV_EMA'] = df_calc['OBV'].ewm(span=5, adjust=False).mean()
 
-    # 4. MACD
-    df_calculated['EMA12'] = df_calculated['Close'].ewm(span=12, adjust=False).mean()
-    df_calculated['EMA26'] = df_calculated['Close'].ewm(span=26, adjust=False).mean()
-    df_calculated['DIF'] = df_calculated['EMA12'] - df_calculated['EMA26']
-    df_calculated['MACD'] = df_calculated['DIF'].ewm(span=9, adjust=False).mean()
-    df_calculated['MACD Histogram'] = df_calculated['DIF'] - df_calculated['MACD']
+    # 4. MACD 指標 (12, 26, 9)
+    df_calc['EMA12'] = df_calc['Close'].ewm(span=12, adjust=False).mean()
+    df_calc['EMA26'] = df_calc['Close'].ewm(span=26, adjust=False).mean()
+    df_calc['DIF'] = df_calc['EMA12'] - df_calc['EMA26']
+    df_calc['MACD'] = df_calc['DIF'].ewm(span=9, adjust=False).mean()
+    df_calc['MACD_Hist'] = df_calc['DIF'] - df_calc['MACD']
 
-    # 5. RSI (Yahoo 靈魂公式)
-    def yahoo_rsi(series, period):
+    # 5. RSI 相對強弱指標 (Yahoo 靈魂平滑公式)
+    def calculate_yahoo_rsi(series, period):
         delta = series.diff()
         gain = delta.clip(lower=0)
         loss = (-delta).clip(lower=0)
         avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
         avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
-        rs = avg_gain / avg_loss
+        rs = avg_gain / avg_loss.replace(0, np.nan)
         return 100 - (100 / (1 + rs))
 
-    df_calculated['RSI5'] = yahoo_rsi(df_calculated['Close'], 5)
-    df_calculated['RSI10'] = yahoo_rsi(df_calculated['Close'], 10)
+    df_calc['RSI5'] = calculate_yahoo_rsi(df_calc['Close'], 5).fillna(50)
+    df_calc['RSI10'] = calculate_yahoo_rsi(df_calc['Close'], 10).fillna(50)
 
     # 6. BIAS 乖離率
-    df_calculated['BIAS10'] = ((df_calculated['Close'] - df_calculated['SMA_10']) / df_calculated['SMA_10']) * 100
-    df_calculated['BIAS20'] = ((df_calculated['Close'] - df_calculated['SMA_20']) / df_calculated['SMA_20']) * 100
-    df_calculated['B10-B20'] = df_calculated['BIAS10'] - df_calculated['BIAS20']
+    df_calc['BIAS10'] = ((df_calc['Close'] - df_calc['SMA_10']) / df_calc['SMA_10']) * 100
+    df_calc['BIAS20'] = ((df_calc['Close'] - df_calc['SMA_20']) / df_calc['SMA_20']) * 100
+    df_calc['B10-B20'] = df_calc['BIAS10'] - df_calc['BIAS20']
 
-# --- 過濾預熱資料 ---
-# 確保 index 格式為 datetime，以利於進行時間過濾
-df_calculated.index = pd.to_datetime(df_calculated.index)
+# 建立逐日紅綠燈診斷模型 (+1 偏多紅燈, -1 偏空綠燈, 0 中立黃燈)
+# 1. 均線/布林帶燈號
+sma_bull = (df_calc['Close'] > df_calc['SMA_20']) & (df_calc['SMA_5'] >= df_calc['SMA_10'])
+sma_bear = (df_calc['Close'] < df_calc['SMA_20']) & (df_calc['SMA_5'] <= df_calc['SMA_10'])
+df_calc['Score_SMA'] = np.where(sma_bull, 1, np.where(sma_bear, -1, 0))
+
+# 2. KDJ 燈號
+kdj_bull = (df_calc['K'] > df_calc['D']) & (df_calc['K'] < 80)
+kdj_bear = (df_calc['K'] < df_calc['D']) & (df_calc['K'] > 20)
+df_calc['Score_KDJ'] = np.where(kdj_bull, 1, np.where(kdj_bear, -1, 0))
+
+# 3. OBV 能量潮燈號
+obv_bull = df_calc['OBV'] >= df_calc['OBV_EMA']
+df_calc['Score_OBV'] = np.where(obv_bull, 1, -1)
+
+# 4. MACD 燈號
+macd_bull = df_calc['MACD_Hist'] > 0
+macd_bear = df_calc['MACD_Hist'] < 0
+df_calc['Score_MACD'] = np.where(macd_bull, 1, np.where(macd_bear, -1, 0))
+
+# 5. RSI 燈號 (多方區間與超買超賣反轉)
+rsi_bull = ((df_calc['RSI5'] > 50) & (df_calc['RSI5'] >= df_calc['RSI10'])) | (df_calc['RSI5'] < 25)
+rsi_bear = ((df_calc['RSI5'] < 50) & (df_calc['RSI5'] < df_calc['RSI10'])) | (df_calc['RSI5'] > 80)
+df_calc['Score_RSI'] = np.where(rsi_bull, 1, np.where(rsi_bear, -1, 0))
+
+# 6. BIAS 乖離率燈號
+bias_bull = df_calc['B10-B20'] >= 0
+df_calc['Score_BIAS'] = np.where(bias_bull, 1, -1)
+
+# 統計每日 6 大指標多空總分 (範圍：-6 ~ +6)
+df_calc['Total_Score'] = (
+    df_calc['Score_SMA'] + 
+    df_calc['Score_KDJ'] + 
+    df_calc['Score_OBV'] + 
+    df_calc['Score_MACD'] + 
+    df_calc['Score_RSI'] + 
+    df_calc['Score_BIAS']
+)
+
+# 過濾掉預熱期間資料，保留使用者指定的觀測區間
+df_calc.index = pd.to_datetime(df_calc.index)
 mask_start = pd.Timestamp(target_start)
-df = df_calculated.loc[mask_start:].copy()
+df = df_calc.loc[mask_start:].copy()
 
-# 將最終繪圖用的 DataFrame 索引轉為字串格式
-df.index = df.index.map(lambda x: x.strftime('%y-%m-%d'))
+if df.empty:
+    st.warning("⚠️ 觀測區間內無交易資料，請調整起始日期或標的代號。")
+    st.stop()
 
-with st.expander("🔍 查看已計算的指標數據 (觀測區間末七筆)"):
-    st.dataframe(df.tail(7))
+# 格式化顯示用索引字串
+df_chart = df.copy()
+df_chart.index = df_chart.index.map(lambda x: x.strftime('%y-%m-%d'))
 
-# ==========================================
-# 4. 步驟 3：專業多圖層視覺化
-# ==========================================
-st.header("Step 3: 綜合技術指標儀表板")
+st.header("🚦 指標紅綠燈多空診斷報告 (最新交易日)")
+
+latest_row = df.iloc[-1]
+latest_date_str = df.index[-1].strftime('%Y-%m-%d')
+close_val = float(latest_row['Close'])
+prev_close = float(df['Close'].iloc[-2]) if len(df) > 1 else close_val
+price_change = close_val - prev_close
+price_pct = (price_change / prev_close) * 100 if prev_close != 0 else 0
+
+total_score = int(latest_row['Total_Score'])
+
+# 統計各指標紅黃綠燈數量
+score_items = [
+    ("均線與布林帶 (SMA & BBands)", int(latest_row['Score_SMA']), f"收盤價 {close_val:.2f} | 20MA: {latest_row['SMA_20']:.2f}"),
+    ("KDJ 指標", int(latest_row['Score_KDJ']), f"K: {latest_row['K']:.1f} | D: {latest_row['D']:.1f} | J: {latest_row['J']:.1f}"),
+    ("OBV 能量潮", int(latest_row['Score_OBV']), f"OBV: {latest_row['OBV']:.0f} | 5日EMA: {latest_row['OBV_EMA']:.0f}"),
+    ("MACD 指標", int(latest_row['Score_MACD']), f"DIF: {latest_row['DIF']:.2f} | MACD: {latest_row['MACD']:.2f} | 柱狀: {latest_row['MACD_Hist']:.2f}"),
+    ("RSI 相對強弱", int(latest_row['Score_RSI']), f"RSI5: {latest_row['RSI5']:.1f} | RSI10: {latest_row['RSI10']:.1f}"),
+    ("BIAS 乖離率", int(latest_row['Score_BIAS']), f"BIAS10: {latest_row['BIAS10']:.2f}% | BIAS20: {latest_row['BIAS20']:.2f}%")
+]
+
+red_count = sum(1 for _, s, _ in score_items if s > 0)
+green_count = sum(1 for _, s, _ in score_items if s < 0)
+yellow_count = sum(1 for _, s, _ in score_items if s == 0)
+
+# 多空診斷評級
+if total_score >= 4:
+    sentiment_tag = "🚀 強烈看多 (Strong Bullish)"
+    summary_desc = "多數指標呈現多頭排列與上漲動能，短中期趨勢偏多發展。"
+elif 1 <= total_score <= 3:
+    sentiment_tag = "📈 偏多震盪 (Moderate Bullish)"
+    summary_desc = "多方稍佔優勢，但部分指標出現鈍化或整理，宜順勢操作並留意回檔支撐。"
+elif total_score == 0:
+    sentiment_tag = "⚖️ 盤整中立 (Neutral Range)"
+    summary_desc = "多空力道膠著平衡，建議等待明確的方向性突破或帶量關鍵訊號。"
+elif -3 <= total_score <= -1:
+    sentiment_tag = "📉 偏空修正 (Moderate Bearish)"
+    summary_desc = "空方動能佔優，短期均線或指標轉弱，需防範進一步回測支撐風險。"
+else:
+    sentiment_tag = "⚠️ 強烈看空 (Strong Bearish)"
+    summary_desc = "多項技術指標全數破位翻空，下行風險較高，建議保守觀望或嚴設停損。"
+
+# 頂部 KPI 卡片顯示
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("最新收盤價", f"{close_val:.2f}", f"{price_change:+.2f} ({price_pct:+.2f}%)")
+c2.metric("燈號統計 (紅 / 綠 / 黃)", f"🔴 {red_count} | 🟢 {green_count} | 🟡 {yellow_count}")
+c3.metric("多空綜合總分 (滿分 ±6)", f"{total_score:+d} 分")
+c4.metric("AI 綜合診斷結論", sentiment_tag)
+
+# 顯示總結狀態框
+st.info(f"📅 **診斷基準日：{latest_date_str}** ｜ **綜合研判**：{summary_desc}")
+
+st.subheader("📋 6 大指標多空詳細燈號一覽")
+table_data = []
+for name, score, detail in score_items:
+    if score > 0:
+        light = "🔴 紅燈 (+1 看多)"
+    elif score < 0:
+        light = "🟢 綠燈 (-1 看空)"
+    else:
+        light = "🟡 黃燈 (0 中立)"
+    table_data.append({
+        "指標項目": name,
+        "診斷燈號 (紅正/綠負)": light,
+        "評分貢獻": f"{score:+d}",
+        "即時指標數值 / 狀態": detail
+    })
+
+st.table(pd.DataFrame(table_data))
+
+st.header("Step 3: 綜合技術指標儀表板 (6大指標視覺化)")
 with st.expander("📖 查看圖表排版設計說明"):
     st.markdown("""
     本圖表使用 Matplotlib 的 `add_subplot(8, 1, ...)` 將畫布切分為 8 個單位高度：
@@ -225,265 +329,108 @@ with st.expander("📖 查看圖表排版設計說明"):
     - **區塊 6 (MACD)**：DIF、MACD 指標及其紅綠柱狀圖。
     - **區塊 7 (RSI)**：觀察 RSI5 與 RSI10 是否觸及超買 (70) 或超賣 (30) 虛線區間。
     - **區塊 8 (BIAS)**：10日與 20日乖離率，及兩者差距的柱狀圖 (輔助判斷極端行情)。
-    - **視覺優化**：隱藏圖表間的重疊刻度，僅在底部的 BIAS 圖表顯示完整日期。
     """)
 
-# 建立圖表畫布 (高度拉高到 16 以容納 6 個圖表)
+# 建立圖表畫布 (高度 16 容納 6 個圖表)
 fig = plt.figure(figsize=(14, 16), layout='constrained')
 
-# 定義 6 大區塊 (總共 8 個單位)
-ax1 = fig.add_subplot(8,1,(1,3)) # 主圖 (佔 3 單位)
-ax2 = fig.add_subplot(8,1,4)     # OBV (佔 1 單位)
-ax3 = fig.add_subplot(8,1,5)     # KDJ (佔 1 單位)
-ax4 = fig.add_subplot(8,1,6)     # MACD (佔 1 單位)
-ax5 = fig.add_subplot(8,1,7)     # RSI (佔 1 單位)
-ax6 = fig.add_subplot(8,1,8)     # BIAS (佔 1 單位)
+ax1 = fig.add_subplot(8, 1, (1, 3)) # 主圖 (佔 3 單位)
+ax2 = fig.add_subplot(8, 1, 4)      # OBV (佔 1 單位)
+ax3 = fig.add_subplot(8, 1, 5)      # KDJ (佔 1 單位)
+ax4 = fig.add_subplot(8, 1, 6)      # MACD (佔 1 單位)
+ax5 = fig.add_subplot(8, 1, 7)      # RSI (佔 1 單位)
+ax6 = fig.add_subplot(8, 1, 8)      # BIAS (佔 1 單位)
 
-# 定義 X 軸刻度間隔 (每 15 根 K 棒顯示一次)
-x_ticks_pos = range(0, len(df.index), 15)
-x_ticks_labels = df.index[::15]
+x_ticks_pos = range(0, len(df_chart.index), max(1, len(df_chart.index) // 10))
+x_ticks_labels = [df_chart.index[i] for i in x_ticks_pos]
 
 # --- Ax1: K線 + 均線 + 布林帶 ---
 ax1.set_xticks(x_ticks_pos)
-ax1.set_xticklabels(x_ticks_labels) # 隱藏重疊字體
-mpf.candlestick2_ochl(ax1, df['Open'], df['Close'], df['High'], df['Low'], 
+ax1.set_xticklabels(x_ticks_labels)
+mpf.candlestick2_ochl(ax1, df_chart['Open'], df_chart['Close'], df_chart['High'], df_chart['Low'], 
                        width=0.8, colorup='r', colordown='g', alpha=1)
-ax1.plot(df['SMA_5'],label='5日均線', color='cyan', lw=1)
-ax1.plot(df['SMA_10'],label='10日均線', color='purple', lw=1)
-ax1.plot(df['SMA_20'],label='20日均線', color='orange', lw=1)
-ax1.plot(df['upper_band'], label='布林上軌', color='g', ls=':', lw=1)
-ax1.plot(df['lower_band'], label='布林下軌', color='g', ls=':', lw=1)
+ax1.plot(df_chart['SMA_5'].values, label='5日均線', color='cyan', lw=1)
+ax1.plot(df_chart['SMA_10'].values, label='10日均線', color='purple', lw=1)
+ax1.plot(df_chart['SMA_20'].values, label='20日均線', color='orange', lw=1)
+ax1.plot(df_chart['upper_band'].values, label='布林上軌', color='g', ls=':', lw=1)
+ax1.plot(df_chart['lower_band'].values, label='布林下軌', color='g', ls=':', lw=1)
 ax1.legend(loc='upper left', fontsize='small')
-ax1.set_title(f"【{stock_id}】綜合技術分析", fontsize=16)
+ax1.set_title(f"【{stock_id}】綜合技術分析與多空評分", fontsize=16)
 
 # --- Ax2: OBV 與 成交量 ---
 ax2.set_xticks(x_ticks_pos)
-ax2.set_xticklabels([]) # 隱藏重疊字體
-conditions = [
-    df['Close'] > df['Close'].shift(1),  # 漲 -> 紅
-    df['Close'] < df['Close'].shift(1)   # 跌 -> 綠
-]
-choices = ['r', 'g']
-vol_colors = np.select(conditions, choices, default='gray')
-
-ax2.plot(df['OBV'], color='purple', ls='--', label='OBV')
+ax2.set_xticklabels([])
+vol_colors = np.where(df_chart['Close'] >= df_chart['Close'].shift(1).fillna(0), 'r', 'g')
+ax2.plot(df_chart['OBV'].values, color='purple', ls='--', label='OBV')
+ax2.plot(df_chart['OBV_EMA'].values, color='orange', lw=1, label='OBV 5EMA')
 ax2_v = ax2.twinx()
-ax2_v.bar(df.index, df['Volume'], color=vol_colors, alpha=0.3, width=0.8)
-ax2.set_title("OBV 能量潮")
-ax2.legend(loc=2, fontsize='small')
-red_patch = mpatches.Patch(color='red', label='紅色漲')
-green_patch = mpatches.Patch(color='green', label='綠色跌')
-gray_patch = mpatches.Patch(color='gray', label='灰持平')
-ax2_v.legend(handles=[red_patch, green_patch,gray_patch],loc=1,title="交易量")
+ax2_v.bar(range(len(df_chart)), df_chart['Volume'], color=vol_colors, alpha=0.6, width=0.8)
+ax2.set_title("OBV 能量潮與成交量")
+ax2.legend(loc='upper left', fontsize='small')
 
 # --- Ax3: KDJ ---
-ax3.plot(df['K'], label='K線', color='cyan', lw=1)
-ax3.plot(df['D'], label='D線', color='purple', lw=1)
-ax3.plot(df['J'], label='J線', color='orange', ls='--')
+ax3.plot(df_chart['K'].values, label='K線', color='cyan', lw=1)
+ax3.plot(df_chart['D'].values, label='D線', color='purple', lw=1)
+ax3.plot(df_chart['J'].values, label='J線', color='orange', ls='--')
+ax3.axhline(80, color='r', ls=':', alpha=0.5)
+ax3.axhline(20, color='g', ls=':', alpha=0.5)
 ax3.set_xticks(x_ticks_pos)
-ax3.set_xticklabels(x_ticks_labels) # 隱藏重疊字體
+ax3.set_xticklabels([])
 ax3.set_title("KDJ 指標")
 ax3.legend(loc='upper left', fontsize='small')
 
 # --- Ax4: MACD ---
-ax4.plot(df['DIF'], label='DIF', color='purple')
-ax4.plot(df['MACD'], label='MACD', color='skyblue')
-m_hist_colors = np.where(df['MACD Histogram'] >= 0, 'r', 'g')
-ax4.bar(df.index, df['MACD Histogram'], color=m_hist_colors, alpha=0.6)
+ax4.plot(df_chart['DIF'].values, label='DIF', color='purple')
+ax4.plot(df_chart['MACD'].values, label='MACD', color='skyblue')
+macd_hist_colors = np.where(df_chart['MACD_Hist'] >= 0, 'r', 'g')
+ax4.bar(range(len(df_chart)), df_chart['MACD_Hist'], color=macd_hist_colors, alpha=0.6)
 ax4.axhline(0, color='gray', ls='--', lw=1)
 ax4.set_xticks(x_ticks_pos)
-ax4.set_xticklabels([]) # 隱藏重疊字體
+ax4.set_xticklabels([])
 ax4.set_title("MACD 指標")
-macd_red_patch = mpatches.Patch(color='red', label='MACD多頭')
-macd_green_patch = mpatches.Patch(color='green', label='MACD空頭')
-handles, labels = ax4.get_legend_handles_labels()
-handles.extend([macd_red_patch, macd_green_patch])
-ax4.legend(handles=handles, loc=2, fontsize='small', framealpha=0.5)
+ax4.legend(loc='upper left', fontsize='small')
 
 # --- Ax5: RSI ---
-ax5.plot(df['RSI5'], label='RSI5', color='cyan', lw=1)
-ax5.plot(df['RSI10'], label='RSI10', color='purple', lw=1)
-ax5.axhline(70, color='r', ls='--', lw=0.8, alpha=0.5) # 超買線
-ax5.axhline(30, color='g', ls='--', lw=0.8, alpha=0.5) # 超賣線
+ax5.plot(df_chart['RSI5'].values, label='RSI5', color='cyan', lw=1)
+ax5.plot(df_chart['RSI10'].values, label='RSI10', color='purple', lw=1)
+ax5.axhline(70, color='r', ls='--', lw=0.8, alpha=0.5)
+ax5.axhline(30, color='g', ls='--', lw=0.8, alpha=0.5)
 ax5.set_ylim(0, 100)
 ax5.set_xticks(x_ticks_pos)
-ax5.set_xticklabels(x_ticks_labels) # 隱藏重疊字體
+ax5.set_xticklabels([])
 ax5.set_title("RSI 相對強弱指標")
 ax5.legend(loc='upper left', fontsize='small')
 
-# --- Ax6: BIAS (乖離率差距柱狀圖) ---
-ax6.plot(df['BIAS10'], label='BIAS10', color='cyan', lw=1)
-ax6.plot(df['BIAS20'], label='BIAS20', color='purple', lw=1)
-bias_diff_colors = np.where(df['B10-B20'] >= 0, 'r', 'g')
-ax6.bar(df.index, df['B10-B20'], color=bias_diff_colors, alpha=0.6)
+# --- Ax6: BIAS ---
+ax6.plot(df_chart['BIAS10'].values, label='BIAS10', color='cyan', lw=1)
+ax6.plot(df_chart['BIAS20'].values, label='BIAS20', color='purple', lw=1)
+bias_colors = np.where(df_chart['B10-B20'] >= 0, 'r', 'g')
+ax6.bar(range(len(df_chart)), df_chart['B10-B20'], color=bias_colors, alpha=0.6)
 ax6.axhline(0, color='gray', ls='--', lw=1)
 ax6.set_xticks(x_ticks_pos)
-ax6.set_xticklabels([]) # 最底部的圖表才顯示日期
-ax6.set_title("BIAS 乖離率")
-bias_red_patch = mpatches.Patch(color='red', label='BIAS正強')
-bias_green_patch = mpatches.Patch(color='green', label='BIAS負弱')
-handles, labels = ax6.get_legend_handles_labels()
-handles.extend([bias_red_patch, bias_green_patch])
-ax6.set_xticks(x_ticks_pos, labels=x_ticks_labels)
-ax6.legend(handles=handles, loc=2, fontsize='small', framealpha=0.5)
+ax6.set_xticklabels(x_ticks_labels, rotation=30)
+ax6.set_title("BIAS 乖離率 (柱狀為 B10-B20 差值)")
+ax6.legend(loc='upper left', fontsize='small')
 
-# 渲染到網頁
 st.pyplot(fig)
 
+st.header("Step 4: 歷史多空總分走勢回測")
+st.markdown("觀察觀測區間內**每日多空總分 (-6 ~ +6)** 的動態轉折變化：")
+
+score_fig, score_ax = plt.subplots(figsize=(14, 4), layout='constrained')
+score_colors = np.where(df_chart['Total_Score'] > 0, '#ef4444', np.where(df_chart['Total_Score'] < 0, '#22c55e', '#eab308'))
+
+score_ax.bar(range(len(df_chart)), df_chart['Total_Score'], color=score_colors, alpha=0.75, label='多空總分 (紅正/綠負)')
+score_ax.plot(df_chart['Total_Score'].rolling(3, min_periods=1).mean().values, color='navy', lw=1.5, ls='-', label='3日平滑趨勢')
+score_ax.axhline(0, color='gray', ls='--', lw=1)
+score_ax.set_ylim(-6.5, 6.5)
+score_ax.set_xticks(x_ticks_pos)
+score_ax.set_xticklabels(x_ticks_labels, rotation=30)
+score_ax.set_title("觀測區間歷史多空總分走勢 (-6 ~ +6)", fontsize=13)
+score_ax.legend(loc='upper left', fontsize='small')
+score_ax.grid(axis='y', linestyle=':', alpha=0.4)
+
+st.pyplot(score_fig)
+
 st.divider()
-st.info("💡 課程提示：觀察 MACD 柱狀圖與 RSI 超買超賣區，配合 BIAS 乖離率差距，可更全面判斷趨勢強弱。")
-
-# ==========================================
-# 5. 步驟 4：進場 / 獲利了結 綜合分析
-# ==========================================
-st.header("Step 4: 進場 / 獲利了結 綜合分析")
-st.caption("以下根據觀測區間「最後一個交易日」的指標數值自動研判，僅供技術面教學參考，非投資建議。")
-
-
-def _f(value):
-    """安全取出純量數值，遇到 NaN 回傳 None。"""
-    try:
-        v = float(value)
-        return None if np.isnan(v) else v
-    except (TypeError, ValueError):
-        return None
-
-
-# 取最後一筆與前一筆，用於判斷交叉與趨勢方向
-last = df.iloc[-1]
-prev = df.iloc[-2] if len(df) >= 2 else last
-
-close = _f(last['Close'])
-sma5, sma10, sma20 = _f(last['SMA_5']), _f(last['SMA_10']), _f(last['SMA_20'])
-upper, lower = _f(last['upper_band']), _f(last['lower_band'])
-k, d = _f(last['K']), _f(last['D'])
-k_prev, d_prev = _f(prev['K']), _f(prev['D'])
-dif, macd_sig = _f(last['DIF']), _f(last['MACD'])
-dif_prev, macd_prev = _f(prev['DIF']), _f(prev['MACD'])
-rsi5 = _f(last['RSI5'])
-bias20 = _f(last['BIAS20'])
-obv_last, obv_prev5 = _f(last['OBV']), _f(df['OBV'].iloc[-6]) if len(df) >= 6 else _f(prev['OBV'])
-
-signals = []  # 每項 (指標, 訊號文字, 分數)；分數 +偏多 / -偏空
-
-
-# 1. 均線排列與布林位置
-if None not in (sma5, sma10, sma20):
-    if sma5 > sma10 > sma20:
-        signals.append(("均線排列", "🔴 多頭排列（5>10>20），趨勢偏多", 1))
-    elif sma5 < sma10 < sma20:
-        signals.append(("均線排列", "🟢 空頭排列（5<10<20），趨勢偏空", -1))
-    else:
-        signals.append(("均線排列", "⚪ 均線糾結，方向未明", 0))
-if None not in (close, upper, lower):
-    if close >= upper:
-        signals.append(("布林通道", "🟢 股價觸及或突破上軌，短線過熱、留意獲利了結", -1))
-    elif close <= lower:
-        signals.append(("布林通道", "🔴 股價觸及或跌破下軌，超跌可留意反彈進場", 1))
-    else:
-        signals.append(("布林通道", "⚪ 股價於布林通道中段，無極端訊號", 0))
-
-# 2. KDJ 交叉與超買超賣
-if None not in (k, d, k_prev, d_prev):
-    if k_prev <= d_prev and k > d:
-        signals.append(("KDJ", f"🔴 K 線由下往上穿越 D 線（黃金交叉，K={k:.1f}），偏多", 1))
-    elif k_prev >= d_prev and k < d:
-        signals.append(("KDJ", f"🟢 K 線由上往下跌破 D 線（死亡交叉，K={k:.1f}），偏空", -1))
-    elif k < 20 and d < 20:
-        signals.append(("KDJ", f"🔴 K、D 同處超賣區（<20），可留意反彈進場", 1))
-    elif k > 80 and d > 80:
-        signals.append(("KDJ", f"🟢 K、D 同處超買區（>80），短線過熱可獲利了結", -1))
-    else:
-        signals.append(("KDJ", f"⚪ KDJ 無明顯交叉訊號（K={k:.1f}, D={d:.1f}）", 0))
-
-# 3. OBV 資金流向
-if None not in (obv_last, obv_prev5):
-    if obv_last > obv_prev5:
-        signals.append(("OBV 能量潮", "🔴 OBV 近 5 日走高，量能支撐、資金流入", 1))
-    elif obv_last < obv_prev5:
-        signals.append(("OBV 能量潮", "🟢 OBV 近 5 日走低，量能轉弱、資金流出", -1))
-    else:
-        signals.append(("OBV 能量潮", "⚪ OBV 持平，量能無明顯方向", 0))
-
-# 4. MACD 交叉與多空軸
-if None not in (dif, macd_sig, dif_prev, macd_prev):
-    if dif_prev <= macd_prev and dif > macd_sig:
-        signals.append(("MACD", "🔴 DIF 向上穿越訊號線（黃金交叉），動能轉強", 1))
-    elif dif_prev >= macd_prev and dif < macd_sig:
-        signals.append(("MACD", "🟢 DIF 向下跌破訊號線（死亡交叉），動能轉弱", -1))
-    elif dif > 0 and dif > macd_sig:
-        signals.append(("MACD", "🔴 DIF 位於零軸之上且高於訊號線，多方動能延續", 1))
-    elif dif < 0 and dif < macd_sig:
-        signals.append(("MACD", "🟢 DIF 位於零軸之下且低於訊號線，空方動能延續", -1))
-    else:
-        signals.append(("MACD", "⚪ MACD 動能中性", 0))
-
-# 5. RSI 超買超賣
-if rsi5 is not None:
-    if rsi5 >= 70:
-        signals.append(("RSI", f"🟢 RSI5={rsi5:.1f} 進入超買區（≥70），漲多過熱、可獲利了結", -1))
-    elif rsi5 <= 30:
-        signals.append(("RSI", f"🔴 RSI5={rsi5:.1f} 進入超賣區（≤30），跌深可留意進場", 1))
-    else:
-        signals.append(("RSI", f"⚪ RSI5={rsi5:.1f} 位於中性區間（30~70）", 0))
-
-# 6. BIAS 乖離率
-if bias20 is not None:
-    if bias20 >= 8:
-        signals.append(("BIAS 乖離率", f"🟢 20日乖離率 {bias20:+.1f}% 過大，股價偏離均線過遠、回檔風險升高", -1))
-    elif bias20 <= -8:
-        signals.append(("BIAS 乖離率", f"🔴 20日乖離率 {bias20:+.1f}% 過低，超跌反彈機會浮現", 1))
-    else:
-        signals.append(("BIAS 乖離率", f"⚪ 20日乖離率 {bias20:+.1f}% 在合理範圍，無極端訊號", 0))
-
-# --- 綜合評分與結論 ---
-total_score = sum(s[2] for s in signals)
-bull = sum(1 for s in signals if s[2] > 0)
-bear = sum(1 for s in signals if s[2] < 0)
-
-col_a, col_b = st.columns([1, 2])
-with col_a:
-    st.metric("綜合多空評分", f"{total_score:+d}", help="各指標偏多 +1、偏空 -1 的加總")
-    st.write(f"🔴 偏多訊號：**{bull}** 項　🟢 偏空訊號：**{bear}** 項")
-with col_b:
-    if total_score >= 3:
-        # 台股紅漲綠跌：偏多用紅框 (st.error 為紅色)
-        st.error("**綜合研判：偏多 → 可留意進場 / 續抱**\n\n多數指標站在多方，趨勢與動能一致向上。若尚未持有可分批佈局，已持有者續抱，並設好停損（如跌破 20 日均線或布林下軌）。")
-    elif total_score <= -3:
-        # 台股紅漲綠跌：偏空用綠框 (st.success 為綠色)
-        st.success("**綜合研判：偏空 → 留意獲利了結 / 觀望**\n\n多數指標轉弱或進入過熱區，上漲動能衰竭。持有者可考慮分批獲利了結或減碼，空手者宜觀望、勿追高。")
-    else:
-        st.warning("**綜合研判：中性 → 區間整理 / 等待訊號**\n\n多空訊號互有拉鋸，方向尚未明朗。建議等待均線、MACD、KDJ 出現一致訊號後再決定進出場。")
-
-st.subheader("📋 各指標逐項研判")
-signal_df = pd.DataFrame(
-    [(name, text, "偏多" if sc > 0 else ("偏空" if sc < 0 else "中性")) for name, text, sc in signals],
-    columns=["指標", "目前研判", "方向"],
-)
-st.table(signal_df)
-
-with st.expander("📖 如何用這 6 大指標判斷進場與獲利了結？"):
-    st.markdown("""
-    技術指標沒有單一萬靈丹，重點是**多項指標互相驗證（共振）**。以下是常見的判讀原則：
-
-    **🔴 偏向「進場 / 加碼」的訊號**
-    - **均線多頭排列**：5 日 > 10 日 > 20 日，且股價站上均線，代表趨勢向上。
-    - **KDJ 黃金交叉**：K 線於低檔（<20）由下往上穿越 D 線。
-    - **MACD 黃金交叉**：DIF 向上突破訊號線，柱狀圖由綠翻紅，最好發生在零軸附近或之上。
-    - **RSI 由超賣區（<30）回升**：跌深出現買盤。
-    - **OBV 持續走高**：股價上漲伴隨量能支撐，較不易是假突破。
-    - **布林下軌 + BIAS 負乖離過大**：超跌後的反彈機會。
-
-    **🟢 偏向「獲利了結 / 減碼」的訊號**
-    - **均線空頭排列**或股價跌破 20 日均線：趨勢轉弱。
-    - **KDJ 在高檔（>80）死亡交叉**：短線過熱、動能反轉。
-    - **MACD 死亡交叉**：DIF 跌破訊號線，柱狀圖由紅翻綠。
-    - **RSI 進入超買區（>70）**：漲多過熱，續抱風險升高。
-    - **股價觸及布林上軌 + BIAS 正乖離過大（如 >8%）**：偏離均線太遠，易拉回。
-    - **OBV 背離**：股價創新高但 OBV 未同步走高，量能不支持，留意假突破。
-
-    **⚠️ 實務提醒**
-    - 指標多為「落後 / 同步」訊號，無法預測未來；務必搭配**停損紀律**（例如跌破 20 日均線或布林下軌出場）。
-    - 不同指標訊號矛盾時，以**趨勢方向（均線、MACD）為主，擺盪指標（KDJ、RSI、BIAS）為輔**。
-    - 本頁面的「綜合多空評分」是把各項訊號簡單加總的教學示範，實際操作仍需考量基本面、籌碼面與大盤環境。
-    """)
+st.caption("⚠️ 免責聲明：本系統所有指標運算與紅綠燈多空總分僅供程式實作與學術研究參考，不構成任何形式之投資邀約或買賣建議。")
